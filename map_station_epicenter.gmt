@@ -1,0 +1,119 @@
+#!/bin/bash
+# This GMt script plots the epicenter and stations available for the Inversion
+# Of that event. Although we might need to modify to make it the final used stations
+# after quality control has been applied. 
+# also plots in light gray previous seismicity.
+
+CONVERT=convert
+PS2PDF=ps2pdf
+MTHOME=/Users/jaimeconvers/geophysics/MTinversions/MTrapidkiwi
+MTLIB=$MTHOME/lib
+
+
+
+USAGE=$MTHOME/lib/usage.`basename $0`
+printf " 
+USAGE: `basename $0` -F EVENTINFO -S STATIONSFILE 
+	Function: 
+		Plot epicenter and stations used for the moment tensor inversion of and event
+MANDATORY FLAGS:
+	-F File with event information, this event is of the form:
+	   2009-12-17 	 01:37:51  +36.4870  -9.9940 	  31  6.0
+	   YYYY-MM-DD    hh:mm:ss     Lat      Long    Depth  Mag 
+	   
+	-S File containing station information 
+
+EXAMPLE: %% `basename $0` -Fevent.info -Sdata-proc/stations.dat.rapid \n\n" > $USAGE
+
+### FLAG OPTIONS ###
+while getopts "F:S:" OPT
+do
+	case ${OPT} in
+		F) EVENTINFO=$OPTARG
+		 ;;
+		S) STATIONSFILE=$OPTARG
+		 ;;
+	 	*) cat $USAGE
+		   rm $USAGE
+		   exit 1
+		 ;;
+ 	esac
+done	
+	   
+if [[ ! "$EVENTINFO" || ! "$STATIONSFILE" ]] ; then
+	echo "ERROR: Mandatory EVENTINFO or STATIONS file  not given. Exiting..."
+	cat $USAGE
+	rm $USAGE
+	exit 1
+fi
+# check that the event.info file exists and has a size geater than zero
+if [[ ! -s $EVENTINFO ]] ; then
+	echo "Event file $EVENTINFO either doesn;t exists or is empty. Please check the file"
+	exit 1
+fi
+# Check that the stations file exists and has a size greater than zero
+if [[ ! -s $STATIONSFILE ]] ; then
+	echo "Event file $STATIONSFILE either doesn;t exists or is empty. Please check the file"
+	exit 1
+fi
+rm $USAGE
+##################
+
+SEISMICITY=$MTHOME/lib/eqk-instrcatalog.epi
+eyear=`awk 'NR==1{print $1}' $EVENTINFO `
+etime=`awk 'NR==1{print $2}' $EVENTINFO `
+elat=`awk 'NR==1{print $3}' $EVENTINFO `
+elon=`awk 'NR==1{print $4}' $EVENTINFO `
+edepth=`awk 'NR==1{print $5}' $EVENTINFO `
+emag=`awk 'NR==1{print $6}' $EVENTINFO `
+YYYYMMDD=`awk 'NR==1{print $1}' $EVENTINFO| awk -F "-" '{print $1$2$3}' `
+hhmmss=`awk 'NR==1{print $2}' $EVENTINFO | awk -F ":" '{print $1$2$3}' `
+TITLE="$eyear `echo $etime | awk -F ":" '{printf "%s%s%s%s%s",$1,"\\\072",$2,"\\\072",$3}'`   ML=$emag "
+#printf "$TITLE \n"
+OUTFILE=stations_${YYYYMMDD}${hhmmss}.ps
+#echo  $YYYYMMDD $hhmmss $OUTFILE
+
+SCALE=17
+LATMIN=35.0
+LATMAX=43.0
+LONMIN=-12.0
+LONMAX=-5.0
+RANGE="-R$LONMIN/$LONMAX/$LATMIN/$LATMAX"
+PROJ="-JM10c"
+BGN="$RANGE $PROJ -K -P"
+MID="$RANGE $PROJ -O -K -P"
+END="$RANGE $PROJ -O -P"
+GRIDFILE=grid_100km.grd # temporary grid file created here
+## Begin Plot ##
+gmtset ANNOT_FONT_SIZE_PRIMARY 10 PAPER_MEDIA letter+ PLOT_DEGREE_FORMAT D # GMT 4
+gmtset HEADER_FONT_SIZE 12
+
+grdmath $RANGE  -I0.1 $elon $elat SDIST = $GRIDFILE # create the gird file to later make the contours
+
+psbasemap -B1a1:."$TITLE":/1a1WeSn -X3 -Y3 $BGN > $OUTFILE
+pscoast -Dh -A50 -N1/1/1 -W1/0 $MID >> $OUTFILE
+
+# Plot the contour lines every 100km with 'km' added to the labels and color them gray
+grdcontour $GRIDFILE $RANGE -A100+ap0+ukm+s8+kblack -Gl$elon/$elat/$elon/$LATMAX -S8 -C100 -Wgray -O -K -J >> $OUTFILE
+
+#Plot previous Seismicity
+awk '{print $1,$2}' $SEISMICITY | psxy -Glightgray -Sc0.03 $MID >> $OUTFILE
+# Plot Stations:
+awk '{print $4,$3}' $STATIONSFILE | psxy -St0.2 -Gblue -Wthinnest $MID >> $OUTFILE
+awk '{print $4,$3,6,0,0,"LB",$2}' $STATIONSFILE | pstext -D0.05i/0 $MID >> $OUTFILE
+# Plot epicenter:
+echo $elon $elat | psxy -Gred  -Sa0.5 $END >> $OUTFILE
+
+# remove extra files:
+rm $GRIDFILE
+
+$CONVERT -antialias  $OUTFILE `basename $OUTFILE .ps`.png
+$PS2PDF $OUTFILE # convert to pdf from .ps
+rm $OUTFILE # Keep only .png and pdf to save space
+# bring up plot:
+#open `basename $OUTFILE .ps`.pdf
+#open $OUTFILE
+#open `basename $OUTFILE .ps`.png
+
+exit 0
+

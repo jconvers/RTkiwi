@@ -1,0 +1,95 @@
+#!/bin/bash
+# Wrapper script to produce a full event MT inversion
+
+# Source the main configuration file:
+MTCONFIG=MTrapid_config.sh
+MTBIN=/Users/jaimeconvers/geophysics/MTinversions/MTrapidkiwi/bin  
+MTLIB=/Users/jaimeconvers/geophysics/MTinversions/MTrapidkiwi/lib
+echo sourcing env variables from $MTCONFIG 
+source $MTBIN/$MTCONFIG
+
+# Programs and scripts in bin/ folder
+START=start_MT.py
+PREPAREFOLDERS=preparefolders.py
+PREPROCESS=preprocess_waveforms.py
+SAC2MSEED=sac2mseed.py
+EVENTMAPSCRIPT=map_station_epicenter.gmt
+WRITERAPIDINVFILE=write_rapidinv_inp.py
+RAPIDINV=rapidinv12c.py # runs the actual inversion
+
+
+RESPFOLDER=$MTLIB/RESP # database folder with RESPONSE information
+DATADIROUT=data-proc # original sac files are here
+DATADIRIN=data-orig  # will end with the mseed displacement files
+INVERSIONDIR=inversion # folder where the input and default parameteres are, inversion is run from
+                       # this location
+F1=0.01
+F2=2.0
+dt=0.2
+SACMACRO=run.macro
+#######################
+# Begin the process
+
+# 0 - get info from event.info file
+echo beginning $START
+$START
+
+# 1 - Making folders of inversion, output
+# For now, the folder data-orig will be there but ideally should be created and 
+# SAC file should be copied. this is done manually for now.
+
+echo Creating/checking folders with $PREPAREFOLDERS
+$PREPAREFOLDERS
+
+# 2 - preprocess:
+# 2.1 Copy RESP files 
+echo Copying RESP files to $DATADIROUT folder
+#echo cp $RESPFOLDER/RESP* $DATADIROUT/
+#cp $RESPFOLDER/RESP* $DATADIROUT/
+echo Creating symbolic links to RES files in $RESPFOLDER/
+#echo ln -s $RESPFOLDER/RESP*  $DATADIROUT/
+ln -s $RESPFOLDER/RESP*  $DATADIROUT/
+
+#2.2 preprocess waveforms
+$PREPROCESS -D$DATADIRIN/ -O$DATADIROUT/ -f1 $F1 -f2 $F2 -t$dt 
+#2.3 run the sac macro to remove instrument response
+pushd $DATADIROUT > /dev/null
+      echo Removing instrument response in SAC with $SACMACRO macro file
+      # $SACMACRO is created by $PREPROCESS
+      sac < $SACMACRO
+      rm RESP*
+      rm *.macro
+      # 2.4 convert to mseed the SAC DISP files
+      echo Copnverting Displacement SAC files to mseed format:
+      $SAC2MSEED
+      # changing extension to .mseed (this needs to be improved ASAP!!!)
+      for i in *mseed
+      do
+	      mv  $i ${i%.mseed}
+      done
+      rm *.sac
+popd > /dev/null
+
+# 3 - Prepare Inversion
+#map_station_epicenter.gmt -F event.info -S data-proc/stations.dat.rapid
+echo "making map with location of event and stations" 
+$EVENTMAPSCRIPT -F event.info -S data-proc/stations.dat.rapid
+# 3.1 stations.dat.rapid is copied already apparently
+
+pushd $INVERSIONDIR > /dev/null
+# 3.2 invoque the script to write the rapidinv.input file before running.
+#     Here it is possible to call a script that will write several files at once, but for now
+#     it is just called once. 
+      echo Copying the .default and .acceptables files...
+      cp $MTLIB/rapidinv.acceptables $MTLIB/rapidinv.defaults .
+      echo "making the rapidinv input file(s)"
+      echo $WRITERAPIDINVFILE 0 0 # this way to call it will change once I add flags
+      $WRITERAPIDINVFILE 0 0 # this way to call it will change once I add flags
+      # 3.3 Run inversion
+      echo $RAPIDINV rapidinv.inp.0
+      $RAPIDINV rapidinv.inp.0
+popd > /dev/null
+
+echo done
+
+exit 0
